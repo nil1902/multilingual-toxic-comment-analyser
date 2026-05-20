@@ -38,7 +38,11 @@ const PRESETS = [
 
 const API_BASE = import.meta.env.DEV 
   ? '' 
-  : (import.meta.env.VITE_API_URL || 'https://multilingual-toxic-comment-analyser.onrender.com');
+  : (import.meta.env.VITE_API_URL 
+      ? import.meta.env.VITE_API_URL.replace(/\/$/, '') 
+      : (window.location.hostname.includes('netlify.app') 
+          ? 'https://multilingual-toxic-comment-analyser.onrender.com' 
+          : ''));
 
 export default function App() {
   // Persistent Theme State (Light / Dark Mode Toggle)

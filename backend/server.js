@@ -1,6 +1,8 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { connectDB, dbQuery, getDBMode } from './config/db.js';
 import { initializeModel, analyzeTextToxicity } from './services/toxicityService.js';
 import { detectLanguage } from './services/languageService.js';
@@ -148,6 +150,22 @@ app.get('/api/comments/metrics', async (req, res) => {
     console.error('Error fetching metrics:', error);
     return res.status(500).json({ success: false, error: error.message });
   }
+});
+
+// Get __dirname in ES module
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+// Serve frontend static assets from ../frontend/dist
+const FRONTEND_DIST = path.join(__dirname, '../frontend/dist');
+app.use(express.static(FRONTEND_DIST));
+
+// Handle React Router SPA fallback (should be registered AFTER the API routes)
+app.get('*', (req, res, next) => {
+  if (req.path.startsWith('/api/')) {
+    return next();
+  }
+  res.sendFile(path.join(FRONTEND_DIST, 'index.html'));
 });
 
 // Start Server
