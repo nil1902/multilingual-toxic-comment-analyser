@@ -36,6 +36,8 @@ const PRESETS = [
   { text: "Это интересная тема для подробного обсуждения.", lang: "Russian", type: "Neutral", emoji: "🇷🇺", sentiment: "neutral" }
 ];
 
+const API_BASE = import.meta.env.VITE_API_URL || '';
+
 export default function App() {
   // Persistent Theme State (Light / Dark Mode Toggle)
   const [theme, setTheme] = useState(() => {
@@ -75,6 +77,7 @@ export default function App() {
   const [dbMode, setDbMode] = useState('Local JSON DB');
   const [modelStatus, setModelStatus] = useState({ loaded: true, loading: false, method: 'HuggingFace ONNX / Lexical Hybrid' });
   const [avgLatency, setAvgLatency] = useState(50); // Default placeholder
+  const [apiError, setApiError] = useState(null);
 
   // Initial load & updates
   useEffect(() => {
@@ -91,7 +94,7 @@ export default function App() {
       if (filterStatus) params.append('status', filterStatus);
       if (filterSentiment) params.append('sentimentLabel', filterSentiment);
 
-      const res = await fetch(`/api/comments?${params.toString()}`);
+      const res = await fetch(`${API_BASE}/api/comments?${params.toString()}`);
       const data = await res.json();
       if (data.success) {
         setComments(data.comments);
@@ -106,7 +109,7 @@ export default function App() {
   const fetchMetrics = async () => {
     setLoadingMetrics(true);
     try {
-      const res = await fetch('/api/comments/metrics');
+      const res = await fetch(`${API_BASE}/api/comments/metrics`);
       const data = await res.json();
       if (data.success) {
         setMetrics(data.metrics);
@@ -124,9 +127,10 @@ export default function App() {
     if (!text || text.trim() === '') return;
 
     setAnalyzing(true);
+    setApiError(null);
     const startTime = Date.now();
     try {
-      const res = await fetch('/api/comments/analyze', {
+      const res = await fetch(`${API_BASE}/api/comments/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text })
@@ -152,9 +156,12 @@ export default function App() {
         
         // Switch to playground tab on mobile so they see the result immediately
         setActiveTab('playground');
+      } else {
+        setApiError(data.error || 'Analysis failed. Please verify backend status.');
       }
     } catch (err) {
       console.error("Analysis error:", err);
+      setApiError('Unable to connect to Kavach AI backend. Please verify your BACKEND_URL environment variable is set in your Netlify dashboard and that you have triggered a deploy.');
     } finally {
       setAnalyzing(false);
     }
@@ -162,7 +169,7 @@ export default function App() {
 
   const handleModerate = async (id, status) => {
     try {
-      const res = await fetch(`/api/comments/${id}`, {
+      const res = await fetch(`${API_BASE}/api/comments/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status })
@@ -179,7 +186,7 @@ export default function App() {
 
   const handleDelete = async (id) => {
     try {
-      const res = await fetch(`/api/comments/${id}`, {
+      const res = await fetch(`${API_BASE}/api/comments/${id}`, {
         method: 'DELETE'
       });
       const data = await res.json();
@@ -452,6 +459,26 @@ export default function App() {
                 {inputText.length} chars
               </span>
             </div>
+
+            {apiError && (
+              <div style={{ 
+                background: 'rgba(239, 68, 68, 0.12)', 
+                border: '1px solid rgba(239, 68, 68, 0.25)', 
+                color: 'var(--accent-danger)', 
+                padding: '0.75rem 1rem', 
+                borderRadius: 'var(--radius-md)', 
+                fontSize: '0.8rem', 
+                display: 'flex', 
+                flexDirection: 'column',
+                gap: '0.25rem',
+                lineHeight: '1.4'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: '700' }}>
+                  <AlertTriangle size={14} /> Connection / Sync Error
+                </div>
+                <div>{apiError}</div>
+              </div>
+            )}
 
             <div style={{ position: 'relative' }}>
               <textarea
