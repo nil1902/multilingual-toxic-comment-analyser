@@ -1,37 +1,42 @@
 import { pipeline } from '@xenova/transformers';
 
-// Global reference to the ONNX pipeline
+// Global reference to the ONNX pipeline and active promise
 let classifier = null;
 let isModelLoading = false;
 let isModelLoaded = false;
 let modelLoadError = null;
+let modelLoadPromise = null;
 
 // Initialize Hugging Face pipeline in the background
 export const initializeModel = async () => {
-  if (isModelLoaded || isModelLoading) return;
+  if (isModelLoaded) return;
+  if (isModelLoading) return modelLoadPromise;
   
   isModelLoading = true;
-  console.log('⏳ Loading HuggingFace Toxic-BERT model into memory (via ONNX runtime)...');
-  
-  try {
-    // We use Xenova/toxic-bert which yields 6 labels: 
-    // toxic, severe_toxic, obscene, threat, insult, identity_hate
-    classifier = await pipeline('text-classification', 'Xenova/toxic-bert', {
-      progress_callback: (progress) => {
-        if (progress.status === 'downloading') {
-          console.log(`📥 Downloading Model File: ${progress.file} - ${Math.round(progress.loaded / 1024 / 1024)}MB / ${Math.round(progress.total / 1024 / 1024)}MB`);
+  modelLoadPromise = (async () => {
+    console.log('⏳ Loading HuggingFace Toxic-BERT model into memory (via ONNX runtime)...');
+    try {
+      // We use Xenova/toxic-bert which yields 6 labels: 
+      // toxic, severe_toxic, obscene, threat, insult, identity_hate
+      classifier = await pipeline('text-classification', 'Xenova/toxic-bert', {
+        progress_callback: (progress) => {
+          if (progress.status === 'downloading') {
+            console.log(`📥 Downloading Model File: ${progress.file} - ${Math.round(progress.loaded / 1024 / 1024)}MB / ${Math.round(progress.total / 1024 / 1024)}MB`);
+          }
         }
-      }
-    });
-    isModelLoaded = true;
-    isModelLoading = false;
-    console.log('✅ HuggingFace Toxic-BERT ONNX Model loaded successfully!');
-  } catch (error) {
-    modelLoadError = error.message;
-    isModelLoading = false;
-    console.error(`⚠️ Failed to load HuggingFace ONNX model: ${error.message}`);
-    console.log('ℹ️ Switched fully to the High-Precision Multilingual Lexical Toxicity Engine.');
-  }
+      });
+      isModelLoaded = true;
+      isModelLoading = false;
+      console.log('✅ HuggingFace Toxic-BERT ONNX Model loaded successfully!');
+    } catch (error) {
+      modelLoadError = error.message;
+      isModelLoading = false;
+      console.error(`⚠️ Failed to load HuggingFace ONNX model: ${error.message}`);
+      console.log('ℹ️ Switched fully to the High-Precision Multilingual Lexical Toxicity Engine.');
+    }
+  })();
+
+  return modelLoadPromise;
 };
 
 // Start initialization in background
@@ -236,57 +241,90 @@ export const analyzeTextToxicity = async (text, langCode = 'eng') => {
   let finalScores = { ...lexicalScores };
   let method = 'Multilingual Lexical Engine (Fallback)';
 
-  // 2. Try to augment with HuggingFace Toxic-BERT ONNX Model if loaded
-  if (isModelLoaded && classifier) {
+  let prediction = null;
+  let predictionMethod = null;
+
+  // 2. Try Hugging Face Inference API if HF_TOKEN is configured
+  if (process.env.HF_TOKEN) {
     try {
-      // Translate simple phrases for non-English to English to maximize Bert performance
       const translatedText = translateSimpleMock(cleanedText, langCode);
-      
-      // Run AI pipeline
-      // toxic-bert outputs array of label classifications with scores
-      const prediction = await classifier(translatedText);
-      
-      if (prediction && Array.isArray(prediction)) {
-        method = 'HuggingFace Toxic-BERT ONNX';
-        
-        // Map BERT results to our 6 categories
-        // Xenova/toxic-bert results look like: [{label: 'toxic', score: 0.98}, {label: 'insult', score: 0.87}, ...]
-        const aiScores = {
-          toxic: 0.0,
-          severe_toxic: 0.0,
-          obscene: 0.0,
-          threat: 0.0,
-          insult: 0.0,
-          identity_hate: 0.0
-        };
+      const response = await fetch(
+        'https://api-inference.huggingface.co/models/unitary/toxic-bert',
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${process.env.HF_TOKEN}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ inputs: translatedText })
+        }
+      );
 
-        prediction.forEach((item) => {
-          const label = item.label.toLowerCase();
-          const score = item.score;
-          // Mapping labels
-          if (label === 'toxic' || label === 'LABEL_0') aiScores.toxic = score;
-          else if (label === 'severe_toxic' || label === 'LABEL_1') aiScores.severe_toxic = score;
-          else if (label === 'obscene' || label === 'LABEL_2') aiScores.obscene = score;
-          else if (label === 'threat' || label === 'LABEL_3') aiScores.threat = score;
-          else if (label === 'insult' || label === 'LABEL_4') aiScores.insult = score;
-          else if (label === 'identity_hate' || label === 'identity_attack' || label === 'LABEL_5') aiScores.identity_hate = score;
-        });
-
-        // Hybrid Blend: We merge AI scores with lexical scores for optimal multi-language confidence
-        // For English, we heavily weight AI (85% AI, 15% Lexical)
-        // For other languages, we weight AI (45% AI - via translated mock, 55% Lexical)
-        const aiWeight = langCode === 'eng' ? 0.85 : 0.45;
-        const lexWeight = 1.0 - aiWeight;
-
-        Object.keys(finalScores).forEach((key) => {
-          finalScores[key] = parseFloat(
-            (aiScores[key] * aiWeight + lexicalScores[key] * lexWeight).toFixed(4)
-          );
-        });
+      if (response.ok) {
+        const result = await response.json();
+        // Hugging Face returns [[{label: 'toxic', score: 0.98}, ...]] or [{label: 'toxic', score: 0.98}, ...]
+        if (Array.isArray(result)) {
+          prediction = Array.isArray(result[0]) ? result[0] : result;
+          predictionMethod = 'HuggingFace Inference API';
+        }
+      } else {
+        const errText = await response.text();
+        console.warn(`⚠️ Hugging Face Inference API error: ${response.status} - ${errText}`);
       }
     } catch (err) {
-      console.warn(`⚠️ Error running inference in HuggingFace: ${err.message}. Using Lexical.`);
+      console.warn(`⚠️ Error calling Hugging Face Inference API: ${err.message}`);
     }
+  }
+
+  // 3. Fallback to local HuggingFace Toxic-BERT ONNX Model if API was not used or failed
+  if (!prediction && isModelLoaded && classifier) {
+    try {
+      const translatedText = translateSimpleMock(cleanedText, langCode);
+      const localResult = await classifier(translatedText);
+      if (localResult && Array.isArray(localResult)) {
+        prediction = localResult;
+        predictionMethod = 'HuggingFace Toxic-BERT ONNX';
+      }
+    } catch (err) {
+      console.warn(`⚠️ Error running inference in local HuggingFace ONNX: ${err.message}`);
+    }
+  }
+
+  // 4. Process predictions if any AI classifier succeeded
+  if (prediction) {
+    method = predictionMethod;
+    const aiScores = {
+      toxic: 0.0,
+      severe_toxic: 0.0,
+      obscene: 0.0,
+      threat: 0.0,
+      insult: 0.0,
+      identity_hate: 0.0
+    };
+
+    prediction.forEach((item) => {
+      const label = item.label.toLowerCase();
+      const score = item.score;
+      // Mapping labels
+      if (label === 'toxic' || label === 'LABEL_0') aiScores.toxic = score;
+      else if (label === 'severe_toxic' || label === 'LABEL_1') aiScores.severe_toxic = score;
+      else if (label === 'obscene' || label === 'LABEL_2') aiScores.obscene = score;
+      else if (label === 'threat' || label === 'LABEL_3') aiScores.threat = score;
+      else if (label === 'insult' || label === 'LABEL_4') aiScores.insult = score;
+      else if (label === 'identity_hate' || label === 'identity_attack' || label === 'LABEL_5') aiScores.identity_hate = score;
+    });
+
+    // Hybrid Blend: We merge AI scores with lexical scores for optimal multi-language confidence
+    // For English, we heavily weight AI (85% AI, 15% Lexical)
+    // For other languages, we weight AI (45% AI - via translated mock, 55% Lexical)
+    const aiWeight = langCode === 'eng' ? 0.85 : 0.45;
+    const lexWeight = 1.0 - aiWeight;
+
+    Object.keys(finalScores).forEach((key) => {
+      finalScores[key] = parseFloat(
+        (aiScores[key] * aiWeight + lexicalScores[key] * lexWeight).toFixed(4)
+      );
+    });
   }
 
   // Calculate aggregate isToxic and toxicityScore
