@@ -365,10 +365,10 @@ export default function App() {
             <TrendingUp size={14} style={{ color: 'var(--accent-success)' }} /> Sentiment Index
           </span>
           <h2 style={{ fontSize: '2rem', fontWeight: '800', color: loadingMetrics ? 'var(--text-primary)' : (metrics?.avgSentiment > 0.15 ? 'var(--accent-success)' : metrics?.avgSentiment < -0.15 ? 'var(--accent-danger)' : 'var(--text-primary)'), margin: '0.2rem 0' }}>
-            {loadingMetrics ? '—' : `${metrics.avgSentiment > 0 ? '+' : ''}${parseFloat(metrics.avgSentiment.toFixed(2))}`}
+            {loadingMetrics || !metrics ? '—' : `${metrics.avgSentiment > 0 ? '+' : ''}${parseFloat(metrics.avgSentiment.toFixed(2))}`}
           </h2>
           <span style={{ color: 'var(--text-muted)', fontSize: '0.7rem', textTransform: 'capitalize' }}>
-            Mood: {loadingMetrics ? '—' : metrics.avgSentiment > 0.15 ? 'Optimistic 😊' : metrics.avgSentiment < -0.15 ? 'Hostile 😠' : 'Balanced 😐'}
+            Mood: {loadingMetrics || !metrics ? '—' : metrics.avgSentiment > 0.15 ? 'Optimistic 😊' : metrics.avgSentiment < -0.15 ? 'Hostile 😠' : 'Balanced 😐'}
           </span>
         </div>
 
