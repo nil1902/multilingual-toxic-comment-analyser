@@ -36,7 +36,9 @@ const PRESETS = [
   { text: "Это интересная тема для подробного обсуждения.", lang: "Russian", type: "Neutral", emoji: "🇷🇺", sentiment: "neutral" }
 ];
 
-const API_BASE = import.meta.env.VITE_API_URL || '';
+const API_BASE = import.meta.env.DEV 
+  ? '' 
+  : (import.meta.env.VITE_API_URL || 'https://multilingual-toxic-comment-analyser.onrender.com');
 
 export default function App() {
   // Persistent Theme State (Light / Dark Mode Toggle)
